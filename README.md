@@ -80,8 +80,6 @@ The KICKR Bike exposes its shifter buttons over a proprietary Wahoo BLE characte
 
 RideControl subscribes to this characteristic, parses the button events, and injects the mapped keystrokes using `CGEvent`.
 
-The full reverse-engineering process is documented in [this Claude.ai conversation](#).
-
 ---
 
 ## Button payload map
