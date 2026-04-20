@@ -273,15 +273,33 @@ class KICKRManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     private func handleButton(_ event: ButtonEvent) {
+        // B is the shift modifier
         if event.button == .b {
             isShiftHeld = event.pressed
             return
         }
+
         let dpad: [KICKRButton] = [.up, .down, .left, .right]
+
         if isShiftHeld && dpad.contains(event.button) {
-            fireAction(mappings.shiftAction(for: event.button), pressed: event.pressed)
+            // Bike firmware quirk: when B is held, Down only emits a single packet
+            // per press (with a release-like payload). Up/Left/Right emit both edges
+            // normally. So we fire on any Down event, but only the press edge for others.
+            if event.button == .down {
+                fireShiftAction(for: .down)
+            } else if event.pressed {
+                fireShiftAction(for: event.button)
+            }
         } else {
             fireAction(mappings.action(for: event.button), pressed: event.pressed)
+        }
+    }
+
+    private func fireShiftAction(for button: KICKRButton) {
+        let action = mappings.shiftAction(for: button)
+        fireAction(action, pressed: true)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            fireAction(action, pressed: false)
         }
     }
 }
@@ -322,7 +340,6 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
         window?.level = pinned ? .floating : .normal
     }
 
-    // Reset pin state when window closes
     func windowWillClose(_ notification: Notification) {
         window?.level = .normal
     }
@@ -343,7 +360,6 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
             ZStack {
                 VStack(spacing: 10) {
                     Image("MenuBarIcon")
@@ -361,7 +377,6 @@ struct SettingsView: View {
                 }
                 .frame(maxWidth: .infinity)
 
-                // Pin button in top-right
                 HStack {
                     Spacer()
                     Button {
