@@ -119,3 +119,14 @@ RideControl subscribes to this characteristic, parses the button events, and inj
 ## License
 
 MIT
+
+### Firmware quirk (KICKR Bike Pro V2)
+
+When the **B** button is held together with **Down**, the bike transmits only
+a single BLE packet per press instead of the usual press+release pair, and
+the payload looks identical to a release event. RideControl compensates by
+firing the shifted action on every Down event while in shift mode, while
+treating Up/Left/Right normally (fire on press edge only).
+
+This app was developed and tested against the **KICKR Bike Pro V2**.
+Behavior may differ on other KICKR Bike revisions.
