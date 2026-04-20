@@ -8,27 +8,29 @@ import UserNotifications
 // MARK: - Actions
 
 enum KeyAction: String, CaseIterable, Codable {
-    case arrowUp            = "Arrow Up"
-    case arrowDown          = "Arrow Down"
-    case arrowLeft          = "Arrow Left"
-    case arrowRight         = "Arrow Right"
-    case returnKey          = "Return"
-    case escape             = "Escape"
-    case tab                = "Tab"
-    case shiftTab           = "Shift + Tab"
-    case cmdTab             = "Cmd + Tab"
-    case copy               = "Copy (⌘C)"
-    case paste              = "Paste"
-    case space              = "Space"
-    case fn                 = "Fn (hold)"
-    case fnSpace            = "Fn + Space"
-    case volumeUp           = "Volume Up"
-    case volumeDown         = "Volume Down"
-    case mediaPlay          = "Play/Pause"
-    case mediaNext          = "Next Track"
-    case mediaPrev          = "Previous Track"
-    case screenshotArea     = "Screenshot"
-    case none               = "None"
+    case arrowUp        = "Arrow Up"
+    case arrowDown      = "Arrow Down"
+    case arrowLeft      = "Arrow Left"
+    case arrowRight     = "Arrow Right"
+    case returnKey      = "Return"
+    case escape         = "Escape"
+    case tab            = "Tab"
+    case shiftTab       = "Shift + Tab"
+    case cmdTab         = "Cmd + Tab"
+    case space          = "Space"
+    case backspace      = "Backspace"
+    case fn             = "Fn (hold)"
+    case fnSpace        = "Fn + Space"
+    case volumeUp       = "Volume Up"
+    case volumeDown     = "Volume Down"
+    case mediaPlay      = "Play/Pause"
+    case mediaNext      = "Next Track"
+    case mediaPrev      = "Previous Track"
+    case screenshotArea = "Screenshot Area"
+    case screenshotFull = "Screenshot Full"
+    case paste          = "Paste"
+    case copy           = "Copy"
+    case none           = "None"
 }
 
 func fireAction(_ action: KeyAction, pressed: Bool) {
@@ -46,6 +48,7 @@ func fireAction(_ action: KeyAction, pressed: Bool) {
     case .escape     where pressed: tap(0x35)
     case .tab        where pressed: tap(0x30)
     case .space      where pressed: tap(0x31)
+    case .backspace  where pressed: tap(0x33)
     case .volumeUp   where pressed: tap(0x48)
     case .volumeDown where pressed: tap(0x49)
     case .mediaPlay  where pressed: tap(0x10)
@@ -80,7 +83,12 @@ func fireAction(_ action: KeyAction, pressed: Bool) {
     case .screenshotArea where pressed:
         let task = Process()
         task.launchPath = "/usr/sbin/screencapture"
-        task.arguments = ["-ic"]  // -i = interactive selection, -c = copy to clipboard
+        task.arguments = ["-ic"]
+        task.launch()
+    case .screenshotFull where pressed:
+        let task = Process()
+        task.launchPath = "/usr/sbin/screencapture"
+        task.arguments = ["-c"]
         task.launch()
     case .paste where pressed:
         let e = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: true)
@@ -143,30 +151,55 @@ func parseButtonEvent(_ data: Data) -> ButtonEvent? {
 @Observable
 class ButtonMappings {
     static let shared = ButtonMappings()
+
     var map: [KICKRButton: KeyAction] = [
         .up:          .arrowUp,
         .down:        .arrowDown,
         .left:        .arrowLeft,
         .right:       .arrowRight,
         .y:           .tab,
-        .b:           .shiftTab,
+        .b:           .none,
         .a:           .returnKey,
         .z:           .cmdTab,
         .leftInside:  .fnSpace,
         .rightInside: .fn,
     ]
-    private let storageKey = "buttonMappings"
+
+    var shiftMap: [KICKRButton: KeyAction] = [
+        .up:    .screenshotArea,
+        .down:  .space,
+        .left:  .backspace,
+        .right: .paste,
+    ]
+
+    private let storageKey      = "buttonMappings"
+    private let shiftStorageKey = "buttonShiftMappings"
+
     init() { load() }
+
     func action(for button: KICKRButton) -> KeyAction { map[button] ?? .none }
+    func shiftAction(for button: KICKRButton) -> KeyAction { shiftMap[button] ?? .none }
+
     func save() {
         let encoded = map.reduce(into: [String: String]()) { $0[$1.key.rawValue] = $1.value.rawValue }
         UserDefaults.standard.set(encoded, forKey: storageKey)
+        let shiftEncoded = shiftMap.reduce(into: [String: String]()) { $0[$1.key.rawValue] = $1.value.rawValue }
+        UserDefaults.standard.set(shiftEncoded, forKey: shiftStorageKey)
     }
+
     func load() {
-        guard let stored = UserDefaults.standard.dictionary(forKey: storageKey) as? [String: String] else { return }
-        for button in KICKRButton.allCases {
-            if let actionRaw = stored[button.rawValue], let action = KeyAction(rawValue: actionRaw) {
-                map[button] = action
+        if let stored = UserDefaults.standard.dictionary(forKey: storageKey) as? [String: String] {
+            for button in KICKRButton.allCases {
+                if let actionRaw = stored[button.rawValue], let action = KeyAction(rawValue: actionRaw) {
+                    map[button] = action
+                }
+            }
+        }
+        if let stored = UserDefaults.standard.dictionary(forKey: shiftStorageKey) as? [String: String] {
+            for button in KICKRButton.allCases {
+                if let actionRaw = stored[button.rawValue], let action = KeyAction(rawValue: actionRaw) {
+                    shiftMap[button] = action
+                }
             }
         }
     }
@@ -183,6 +216,7 @@ class KICKRManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     private var central: CBCentralManager!
     private var peripheral: CBPeripheral?
     private let mappings = ButtonMappings.shared
+    private var isShiftHeld = false
 
     override init() {
         super.init()
@@ -204,18 +238,13 @@ class KICKRManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     func centralManager(_ central: CBCentralManager, didConnect peripheral: CBPeripheral) {
-        DispatchQueue.main.async {
-            self.connected = true
-            self.deviceName = peripheral.name ?? "KICKR Bike"
-        }
+        DispatchQueue.main.async { self.connected = true; self.deviceName = peripheral.name ?? "KICKR Bike" }
         peripheral.discoverServices(nil)
     }
 
     func centralManager(_ central: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?) {
-        DispatchQueue.main.async {
-            self.connected = false
-            self.deviceName = "Not connected"
-        }
+        DispatchQueue.main.async { self.connected = false; self.deviceName = "Not connected" }
+        isShiftHeld = false
         central.scanForPeripherals(withServices: nil, options: nil)
     }
 
@@ -236,7 +265,20 @@ class KICKRManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         guard characteristic.uuid.uuidString.uppercased() == shifterCharUUID,
               let data = characteristic.value,
               let event = parseButtonEvent(data) else { return }
-        fireAction(mappings.action(for: event.button), pressed: event.pressed)
+        handleButton(event)
+    }
+
+    private func handleButton(_ event: ButtonEvent) {
+        if event.button == .b {
+            isShiftHeld = event.pressed
+            return
+        }
+        let dpad: [KICKRButton] = [.up, .down, .left, .right]
+        if isShiftHeld && dpad.contains(event.button) {
+            fireAction(mappings.shiftAction(for: event.button), pressed: event.pressed)
+        } else {
+            fireAction(mappings.action(for: event.button), pressed: event.pressed)
+        }
     }
 }
 
@@ -254,7 +296,7 @@ class SettingsWindowController {
         }
         let view = NSHostingView(rootView: SettingsView())
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 620),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 700),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -277,20 +319,17 @@ struct SettingsView: View {
     @State private var launchAtLogin = (SMAppService.mainApp.status == .enabled)
 
     let dpadButtons: [KICKRButton]   = [.up, .down, .left, .right]
-    let faceButtons: [KICKRButton]   = [.y, .b, .a, .z]
+    let faceButtons: [KICKRButton]   = [.y, .a, .z]
     let insideButtons: [KICKRButton] = [.leftInside, .rightInside]
 
     var body: some View {
         VStack(spacing: 0) {
-
-            // Header
             VStack(spacing: 10) {
                 Image("MenuBarIcon")
                     .resizable()
                     .scaledToFit()
                     .frame(width: 48, height: 48)
                     .foregroundStyle(.primary)
-
                 VStack(spacing: 2) {
                     Text("RideControl")
                         .font(.system(size: 20, weight: .bold))
@@ -310,24 +349,31 @@ struct SettingsView: View {
                     Toggle("Launch at login", isOn: $launchAtLogin)
                         .onChange(of: launchAtLogin) { _, enabled in
                             do {
-                                if enabled {
-                                    try SMAppService.mainApp.register()
-                                } else {
-                                    try SMAppService.mainApp.unregister()
-                                }
-                            } catch {
-                                print("Login item error: \(error)")
-                            }
+                                if enabled { try SMAppService.mainApp.register() }
+                                else { try SMAppService.mainApp.unregister() }
+                            } catch { print("Login item error: \(error)") }
                         }
                 }
-                Section("Left") {
-                    ForEach(dpadButtons, id: \.self) { row(for: $0) }
+
+                Section("Left (D-Pad)") {
+                    ForEach(dpadButtons, id: \.self) { row(for: $0, map: \.map) }
                 }
-                Section("Right") {
-                    ForEach(faceButtons, id: \.self) { row(for: $0) }
+
+                Section("Left — Shift Layer (hold B)") {
+                    ForEach(dpadButtons, id: \.self) { row(for: $0, map: \.shiftMap) }
                 }
+
+                Section("Right (Face Buttons)") {
+                    ForEach(faceButtons, id: \.self) { row(for: $0, map: \.map) }
+                    HStack {
+                        Text("B (Bottom)").foregroundStyle(.primary)
+                        Spacer()
+                        Text("Shift Modifier").foregroundStyle(.secondary).font(.system(size: 13))
+                    }
+                }
+
                 Section("Inside Levers") {
-                    ForEach(insideButtons, id: \.self) { row(for: $0) }
+                    ForEach(insideButtons, id: \.self) { row(for: $0, map: \.map) }
                 }
             }
             .formStyle(.grouped)
@@ -337,23 +383,23 @@ struct SettingsView: View {
     }
 
     @ViewBuilder
-    func row(for button: KICKRButton) -> some View {
+    func row(for button: KICKRButton, map keyPath: ReferenceWritableKeyPath<ButtonMappings, [KICKRButton: KeyAction]>) -> some View {
         HStack {
             Picker(button.rawValue, selection: Binding(
-                get: { mappings.map[button] ?? .none },
-                set: { mappings.map[button] = $0; mappings.save() }
+                get: { mappings[keyPath: keyPath][button] ?? .none },
+                set: { mappings[keyPath: keyPath][button] = $0; mappings.save() }
             )) {
                 ForEach(KeyAction.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
 
             Button {
-                fireAction(mappings.map[button] ?? .none, pressed: true)
+                let action = mappings[keyPath: keyPath][button] ?? .none
+                fireAction(action, pressed: true)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    fireAction(mappings.map[button] ?? .none, pressed: false)
+                    fireAction(action, pressed: false)
                 }
             } label: {
-                Image(systemName: "play.circle")
-                    .foregroundStyle(.secondary)
+                Image(systemName: "play.circle").foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
         }
@@ -391,13 +437,8 @@ struct RideControlApp: App {
             .padding(.horizontal, 2)
 
             Divider()
-
-            Button("Settings...") {
-                SettingsWindowController.shared.open()
-            }
-
+            Button("Settings...") { SettingsWindowController.shared.open() }
             Divider()
-
             Button("Quit RideControl") { NSApplication.shared.terminate(nil) }
         } label: {
             Image("MenuBarIcon")
