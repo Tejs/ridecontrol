@@ -8,24 +8,27 @@ import UserNotifications
 // MARK: - Actions
 
 enum KeyAction: String, CaseIterable, Codable {
-    case arrowUp       = "Arrow Up"
-    case arrowDown     = "Arrow Down"
-    case arrowLeft     = "Arrow Left"
-    case arrowRight    = "Arrow Right"
-    case returnKey     = "Return"
-    case escape        = "Escape"
-    case tab           = "Tab"
-    case shiftTab      = "Shift + Tab"
-    case cmdTab        = "Cmd + Tab"
-    case space         = "Space"
-    case fn            = "Fn (hold)"
-    case fnSpace       = "Fn + Space"
-    case volumeUp      = "Volume Up"
-    case volumeDown    = "Volume Down"
-    case mediaPlay     = "Play/Pause"
-    case mediaNext     = "Next Track"
-    case mediaPrev     = "Previous Track"
-    case none          = "None"
+    case arrowUp            = "Arrow Up"
+    case arrowDown          = "Arrow Down"
+    case arrowLeft          = "Arrow Left"
+    case arrowRight         = "Arrow Right"
+    case returnKey          = "Return"
+    case escape             = "Escape"
+    case tab                = "Tab"
+    case shiftTab           = "Shift + Tab"
+    case cmdTab             = "Cmd + Tab"
+    case copy               = "Copy (⌘C)"
+    case paste              = "Paste"
+    case space              = "Space"
+    case fn                 = "Fn (hold)"
+    case fnSpace            = "Fn + Space"
+    case volumeUp           = "Volume Up"
+    case volumeDown         = "Volume Down"
+    case mediaPlay          = "Play/Pause"
+    case mediaNext          = "Next Track"
+    case mediaPrev          = "Previous Track"
+    case screenshotArea     = "Screenshot"
+    case none               = "None"
 }
 
 func fireAction(_ action: KeyAction, pressed: Bool) {
@@ -73,6 +76,23 @@ func fireAction(_ action: KeyAction, pressed: Bool) {
         e?.post(tap: .cgSessionEventTap)
         let u = CGEvent(keyboardEventSource: src, virtualKey: 0x30, keyDown: false)
         u?.flags = .maskCommand
+        u?.post(tap: .cgSessionEventTap)
+    case .screenshotArea where pressed:
+        let task = Process()
+        task.launchPath = "/usr/sbin/screencapture"
+        task.arguments = ["-ic"]  // -i = interactive selection, -c = copy to clipboard
+        task.launch()
+    case .paste where pressed:
+        let e = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: true)
+        e?.flags = .maskCommand
+        e?.post(tap: .cgSessionEventTap)
+        let u = CGEvent(keyboardEventSource: src, virtualKey: 0x09, keyDown: false)
+        u?.post(tap: .cgSessionEventTap)
+    case .copy where pressed:
+        let e = CGEvent(keyboardEventSource: src, virtualKey: 0x08, keyDown: true)
+        e?.flags = .maskCommand
+        e?.post(tap: .cgSessionEventTap)
+        let u = CGEvent(keyboardEventSource: src, virtualKey: 0x08, keyDown: false)
         u?.post(tap: .cgSessionEventTap)
     default: break
     }
@@ -318,11 +338,24 @@ struct SettingsView: View {
 
     @ViewBuilder
     func row(for button: KICKRButton) -> some View {
-        Picker(button.rawValue, selection: Binding(
-            get: { mappings.map[button] ?? .none },
-            set: { mappings.map[button] = $0; mappings.save() }
-        )) {
-            ForEach(KeyAction.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+        HStack {
+            Picker(button.rawValue, selection: Binding(
+                get: { mappings.map[button] ?? .none },
+                set: { mappings.map[button] = $0; mappings.save() }
+            )) {
+                ForEach(KeyAction.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+            }
+
+            Button {
+                fireAction(mappings.map[button] ?? .none, pressed: true)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                    fireAction(mappings.map[button] ?? .none, pressed: false)
+                }
+            } label: {
+                Image(systemName: "play.circle")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
         }
     }
 }
