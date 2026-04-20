@@ -5,6 +5,10 @@ import AppKit
 import ServiceManagement
 import UserNotifications
 
+// MARK: - Debug flags
+
+let showTestButtons = false  // set to true in Xcode to show play buttons for off-bike testing
+
 // MARK: - Actions
 
 enum KeyAction: String, CaseIterable, Codable {
@@ -284,7 +288,7 @@ class KICKRManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
 
 // MARK: - Settings Window
 
-class SettingsWindowController {
+class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
 
@@ -294,9 +298,11 @@ class SettingsWindowController {
             NSApp.activate(ignoringOtherApps: true)
             return
         }
-        let view = NSHostingView(rootView: SettingsView())
+        let view = NSHostingView(rootView: SettingsView(onPinChanged: { [weak self] pinned in
+            self?.setPinned(pinned)
+        }))
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 720),
             styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
@@ -306,9 +312,19 @@ class SettingsWindowController {
         w.contentView = view
         w.center()
         w.isReleasedWhenClosed = false
+        w.delegate = self
         w.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
         self.window = w
+    }
+
+    func setPinned(_ pinned: Bool) {
+        window?.level = pinned ? .floating : .normal
+    }
+
+    // Reset pin state when window closes
+    func windowWillClose(_ notification: Notification) {
+        window?.level = .normal
     }
 }
 
@@ -317,6 +333,9 @@ class SettingsWindowController {
 struct SettingsView: View {
     @State private var mappings = ButtonMappings.shared
     @State private var launchAtLogin = (SMAppService.mainApp.status == .enabled)
+    @State private var pinOnTop = false
+
+    let onPinChanged: (Bool) -> Void
 
     let dpadButtons: [KICKRButton]   = [.up, .down, .left, .right]
     let faceButtons: [KICKRButton]   = [.y, .a, .z]
@@ -324,22 +343,48 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            VStack(spacing: 10) {
-                Image("MenuBarIcon")
-                    .resizable()
-                    .scaledToFit()
-                    .frame(width: 48, height: 48)
-                    .foregroundStyle(.primary)
-                VStack(spacing: 2) {
-                    Text("RideControl")
-                        .font(.system(size: 20, weight: .bold))
-                    Text("KICKR Bike Controller")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+            // Header
+            ZStack {
+                VStack(spacing: 10) {
+                    Image("MenuBarIcon")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 48, height: 48)
+                        .foregroundStyle(.primary)
+                    VStack(spacing: 2) {
+                        Text("RideControl")
+                            .font(.system(size: 20, weight: .bold))
+                        Text("KICKR Bike Controller")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
                 }
+                .frame(maxWidth: .infinity)
+
+                // Pin button in top-right
+                HStack {
+                    Spacer()
+                    Button {
+                        pinOnTop.toggle()
+                        onPinChanged(pinOnTop)
+                    } label: {
+                        Image(systemName: pinOnTop ? "pin.fill" : "pin")
+                            .rotationEffect(.degrees(pinOnTop ? 0 : 45))
+                            .font(.system(size: 14))
+                            .foregroundStyle(pinOnTop ? Color.accentColor : Color.secondary)
+                            .frame(width: 28, height: 28)
+                            .background(
+                                Circle().fill(pinOnTop ? Color.accentColor.opacity(0.15) : Color.clear)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help(pinOnTop ? "Unpin from top" : "Keep window on top")
+                    .padding(.trailing, 16)
+                }
+                .frame(maxHeight: .infinity, alignment: .top)
+                .padding(.top, 12)
             }
-            .frame(maxWidth: .infinity)
-            .padding(.top, 28)
+            .padding(.top, 16)
             .padding(.bottom, 20)
 
             Divider()
@@ -392,16 +437,18 @@ struct SettingsView: View {
                 ForEach(KeyAction.allCases, id: \.self) { Text($0.rawValue).tag($0) }
             }
 
-            Button {
-                let action = mappings[keyPath: keyPath][button] ?? .none
-                fireAction(action, pressed: true)
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    fireAction(action, pressed: false)
+            if showTestButtons {
+                Button {
+                    let action = mappings[keyPath: keyPath][button] ?? .none
+                    fireAction(action, pressed: true)
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        fireAction(action, pressed: false)
+                    }
+                } label: {
+                    Image(systemName: "play.circle").foregroundStyle(.secondary)
                 }
-            } label: {
-                Image(systemName: "play.circle").foregroundStyle(.secondary)
+                .buttonStyle(.plain)
             }
-            .buttonStyle(.plain)
         }
     }
 }
