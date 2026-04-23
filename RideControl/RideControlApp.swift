@@ -7,7 +7,7 @@ import UserNotifications
 
 // MARK: - Debug flags
 
-let showTestButtons = false  // set to true in Xcode to show play buttons for off-bike testing
+let showTestButtons = false
 
 // MARK: - Actions
 
@@ -37,6 +37,34 @@ enum KeyAction: String, CaseIterable, Codable {
     case none           = "None"
 }
 
+// Media key constants from IOKit hidsystem/ev_keymap.h
+private let NX_KEYTYPE_SOUND_UP: Int32   = 0
+private let NX_KEYTYPE_SOUND_DOWN: Int32 = 1
+private let NX_KEYTYPE_PLAY: Int32       = 16
+private let NX_KEYTYPE_NEXT: Int32       = 17
+private let NX_KEYTYPE_PREVIOUS: Int32   = 18
+
+private func postMediaKey(_ key: Int32) {
+    func send(down: Bool) {
+        let flags = NSEvent.ModifierFlags(rawValue: UInt(down ? 0xA00 : 0xB00))
+        let data1 = Int((key << 16) | ((down ? 0xA : 0xB) << 8))
+        guard let event = NSEvent.otherEvent(
+            with: .systemDefined,
+            location: .zero,
+            modifierFlags: flags,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            subtype: 8,
+            data1: data1,
+            data2: -1
+        ) else { return }
+        event.cgEvent?.post(tap: .cghidEventTap)
+    }
+    send(down: true)
+    send(down: false)
+}
+
 func fireAction(_ action: KeyAction, pressed: Bool) {
     let src = CGEventSource(stateID: .hidSystemState)
     func key(_ code: CGKeyCode, down: Bool) {
@@ -53,11 +81,11 @@ func fireAction(_ action: KeyAction, pressed: Bool) {
     case .tab        where pressed: tap(0x30)
     case .space      where pressed: tap(0x31)
     case .backspace  where pressed: tap(0x33)
-    case .volumeUp   where pressed: tap(0x48)
-    case .volumeDown where pressed: tap(0x49)
-    case .mediaPlay  where pressed: tap(0x10)
-    case .mediaNext  where pressed: tap(0x11)
-    case .mediaPrev  where pressed: tap(0x12)
+    case .volumeUp   where pressed: postMediaKey(NX_KEYTYPE_SOUND_UP)
+    case .volumeDown where pressed: postMediaKey(NX_KEYTYPE_SOUND_DOWN)
+    case .mediaPlay  where pressed: postMediaKey(NX_KEYTYPE_PLAY)
+    case .mediaNext  where pressed: postMediaKey(NX_KEYTYPE_NEXT)
+    case .mediaPrev  where pressed: postMediaKey(NX_KEYTYPE_PREVIOUS)
     case .fn:
         let e = CGEvent(keyboardEventSource: src, virtualKey: 0x3F, keyDown: pressed)
         e?.flags = pressed ? [.maskSecondaryFn] : []
@@ -273,7 +301,6 @@ class KICKRManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
     }
 
     private func handleButton(_ event: ButtonEvent) {
-        // B is the shift modifier
         if event.button == .b {
             isShiftHeld = event.pressed
             return
@@ -282,9 +309,8 @@ class KICKRManager: NSObject, CBCentralManagerDelegate, CBPeripheralDelegate {
         let dpad: [KICKRButton] = [.up, .down, .left, .right]
 
         if isShiftHeld && dpad.contains(event.button) {
-            // Bike firmware quirk: when B is held, Down only emits a single packet
-            // per press (with a release-like payload). Up/Left/Right emit both edges
-            // normally. So we fire on any Down event, but only the press edge for others.
+            // Firmware quirk: when B is held, Down emits only a single packet per press
+            // with a release-like payload. Up/Left/Right emit both edges normally.
             if event.button == .down {
                 fireShiftAction(for: .down)
             } else if event.pressed {
