@@ -115,7 +115,10 @@ Different actions use different macOS APIs:
 - **Modifier combos** (Shift+Tab, Cmd+Tab, Cmd+V, Cmd+C, Fn+Space) — same `CGEvent` API but with `.flags` set on the event
 - **Fn key (hold)** — `CGEvent` with virtualKey `0x3F` and `.maskSecondaryFn` flag
 - **Media keys** (Play/Pause, Next, Previous, Volume Up/Down) — `NSEvent.otherEvent(.systemDefined ...)` with subtype 8 and `NX_KEYTYPE_*` constants. **Cannot use CGEvent for these — they'd just type letters.**
-- **Screenshots** — spawn `/usr/sbin/screencapture` via `Process()`. CGEvent cannot reliably trigger system screenshot shortcuts.
+- **Screenshots** — spawn `/usr/sbin/screencapture` via `Process()`. CGEvent cannot reliably trigger system screenshot shortcuts. Three variants:
+  - `Screenshot Area (Clipboard)` → `screencapture -ic` (interactive area selector, copies PNG to clipboard)
+  - `Screenshot Area (File)` → `screencapture -i [path]` (interactive area selector, saves PNG to disk; if `screenshotSaveDir` is set in UserDefaults, a timestamped filename is built into that directory; otherwise no path argument is passed and macOS uses its system-configured default location)
+  - `Screenshot Full` → `screencapture -c` (whole screen to clipboard)
 
 ### Default mappings
 
@@ -132,7 +135,7 @@ Normal layer:
 - Right Lever → Fn (hold) (Wispr Flow push-to-talk)
 
 Shift layer (hold B + D-pad):
-- B + ↑ → Screenshot Area
+- B + ↑ → Screenshot Area (Clipboard)
 - B + ↓ → Space
 - B + ← → Backspace
 - B + → → Paste
@@ -168,6 +171,18 @@ Media keys use these IOKit constants instead:
 
 ---
 
+## Persisted preferences (UserDefaults keys)
+
+| Key | Type | Owner | Purpose |
+|-----|------|-------|---------|
+| `buttonMappings`      | `[String: String]` | `ButtonMappings` | Normal-layer button → action mapping (raw values) |
+| `buttonShiftMappings` | `[String: String]` | `ButtonMappings` | Shift-layer (B + D-pad) mapping (raw values) |
+| `screenshotSaveDir`   | `String`           | `SettingsView` (`@AppStorage`) | Optional directory path for `Screenshot Area (File)`. Empty string = use macOS default location. |
+
+**Note on enum rename safety**: `KeyAction` raw values are persisted by string. Renaming a case's raw value will cause stored mappings using the old name to silently fail to decode and fall back to the in-code default. Treat `KeyAction.rawValue` as part of the storage contract.
+
+---
+
 ## Debug flag
 
 At the top of `RideControlApp.swift`:
@@ -182,10 +197,12 @@ Set to `true` to show small play (▶) buttons next to each picker row in the se
 
 ## UI conventions
 
-- Settings window is **440pt wide**, fixed-height, content sized to fit.
+- Settings window is **440pt wide** (locked), with **resizable height**: min 320pt, default 600pt, no max. The window's `contentMaxSize` width and `contentMinSize` width are both pinned to 440 so users can only resize vertically.
+- The grouped Form scrolls internally when content exceeds window height — the SwiftUI view no longer uses `.fixedSize`, so the Form fills available vertical space.
 - Header: 48pt cycling icon, "RideControl" bold 20pt, "KICKR Bike Controller" subhead in secondary color.
 - Pin button (top-right of header): toggles `window.level = .floating` for keep-on-top. Resets to `.normal` when window closes.
 - Settings sections: General → Left (D-Pad) → Left — Shift Layer (hold B) → Right (Face Buttons) → Inside Levers.
+- General section contains: Launch at login toggle, and Screenshot save location row (path display + Choose…/Reset buttons).
 - B button is shown in the Right section as a non-interactive row labeled "Shift Modifier".
 
 ---

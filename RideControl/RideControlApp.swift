@@ -9,6 +9,10 @@ import UserNotifications
 
 let showTestButtons = false
 
+// MARK: - UserDefaults keys
+
+let screenshotDirKey = "screenshotSaveDir"
+
 // MARK: - Actions
 
 enum KeyAction: String, CaseIterable, Codable {
@@ -21,6 +25,7 @@ enum KeyAction: String, CaseIterable, Codable {
     case tab            = "Tab"
     case shiftTab       = "Shift + Tab"
     case cmdTab         = "Cmd + Tab"
+    case cmdReturn      = "Cmd + Return"
     case space          = "Space"
     case backspace      = "Backspace"
     case fn             = "Fn (hold)"
@@ -30,8 +35,9 @@ enum KeyAction: String, CaseIterable, Codable {
     case mediaPlay      = "Play/Pause"
     case mediaNext      = "Next Track"
     case mediaPrev      = "Previous Track"
-    case screenshotArea = "Screenshot Area"
-    case screenshotFull = "Screenshot Full"
+    case screenshotArea     = "Screenshot Area (Clipboard)"
+    case screenshotAreaFile = "Screenshot Area (File)"
+    case screenshotFull     = "Screenshot Full"
     case paste          = "Paste"
     case copy           = "Copy"
     case none           = "None"
@@ -112,10 +118,29 @@ func fireAction(_ action: KeyAction, pressed: Bool) {
         let u = CGEvent(keyboardEventSource: src, virtualKey: 0x30, keyDown: false)
         u?.flags = .maskCommand
         u?.post(tap: .cgSessionEventTap)
+    case .cmdReturn where pressed:
+        let e = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true)
+        e?.flags = .maskCommand
+        e?.post(tap: .cgSessionEventTap)
+        let u = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false)
+        u?.flags = .maskCommand
+        u?.post(tap: .cgSessionEventTap)
     case .screenshotArea where pressed:
         let task = Process()
         task.launchPath = "/usr/sbin/screencapture"
         task.arguments = ["-ic"]
+        task.launch()
+    case .screenshotAreaFile where pressed:
+        let task = Process()
+        task.launchPath = "/usr/sbin/screencapture"
+        if let dir = UserDefaults.standard.string(forKey: screenshotDirKey), !dir.isEmpty {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+            let path = (dir as NSString).appendingPathComponent("Screenshot \(fmt.string(from: Date())).png")
+            task.arguments = ["-i", path]
+        } else {
+            task.arguments = ["-i"]
+        }
         task.launch()
     case .screenshotFull where pressed:
         let task = Process()
@@ -346,15 +371,20 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             self?.setPinned(pinned)
         }))
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 550, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         w.title = "RideControl"
         w.titlebarAppearsTransparent = true
         w.contentView = view
-        w.center()
+        w.contentMinSize = NSSize(width: 360, height: 320)
+        w.contentMaxSize = NSSize(width: 1200, height: 10000)
+        let autosaveName = "RideControlSettingsWindow"
+        let restored = w.setFrameUsingName(autosaveName)
+        w.setFrameAutosaveName(autosaveName)
+        if !restored { w.center() }
         w.isReleasedWhenClosed = false
         w.delegate = self
         w.makeKeyAndOrderFront(nil)
@@ -377,6 +407,12 @@ struct SettingsView: View {
     @State private var mappings = ButtonMappings.shared
     @State private var launchAtLogin = (SMAppService.mainApp.status == .enabled)
     @State private var pinOnTop = false
+    @AppStorage(screenshotDirKey) private var screenshotSaveDir: String = ""
+
+    private var appVersion: String {
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        return short
+    }
 
     let onPinChanged: (Bool) -> Void
 
@@ -386,47 +422,44 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                VStack(spacing: 10) {
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 6) {
                     Image("MenuBarIcon")
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 48, height: 48)
+                        .frame(width: 36, height: 36)
                         .foregroundStyle(.primary)
-                    VStack(spacing: 2) {
+                    VStack(spacing: 1) {
                         Text("RideControl")
-                            .font(.system(size: 20, weight: .bold))
-                        Text("KICKR Bike Controller")
-                            .font(.subheadline)
+                            .font(.system(size: 17, weight: .bold))
+                        Text("KICKR Bike Controller · v\(appVersion)")
+                            .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity)
 
-                HStack {
-                    Spacer()
-                    Button {
-                        pinOnTop.toggle()
-                        onPinChanged(pinOnTop)
-                    } label: {
-                        Image(systemName: pinOnTop ? "pin.fill" : "pin")
-                            .rotationEffect(.degrees(pinOnTop ? 0 : 45))
-                            .font(.system(size: 14))
-                            .foregroundStyle(pinOnTop ? Color.accentColor : Color.secondary)
-                            .frame(width: 28, height: 28)
-                            .background(
-                                Circle().fill(pinOnTop ? Color.accentColor.opacity(0.15) : Color.clear)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(pinOnTop ? "Unpin from top" : "Keep window on top")
-                    .padding(.trailing, 16)
+                Button {
+                    pinOnTop.toggle()
+                    onPinChanged(pinOnTop)
+                } label: {
+                    Image(systemName: pinOnTop ? "pin.fill" : "pin")
+                        .rotationEffect(.degrees(pinOnTop ? 0 : 45))
+                        .font(.system(size: 13))
+                        .foregroundStyle(pinOnTop ? Color.accentColor : Color.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            Circle().fill(pinOnTop ? Color.accentColor.opacity(0.15) : Color.clear)
+                        )
                 }
-                .frame(maxHeight: .infinity, alignment: .top)
-                .padding(.top, 12)
+                .buttonStyle(.plain)
+                .help(pinOnTop ? "Unpin from top" : "Keep window on top")
+                .padding(.top, 8)
+                .padding(.trailing, 12)
             }
-            .padding(.top, 16)
-            .padding(.bottom, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 12)
+            .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
@@ -439,6 +472,33 @@ struct SettingsView: View {
                                 else { try SMAppService.mainApp.unregister() }
                             } catch { print("Login item error: \(error)") }
                         }
+
+                    HStack {
+                        Text("Screenshot save location")
+                        Spacer()
+                        Text(screenshotSaveDir.isEmpty
+                             ? "Default (system setting)"
+                             : (screenshotSaveDir as NSString).abbreviatingWithTildeInPath)
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button("Choose…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseDirectories = true
+                            panel.canChooseFiles = false
+                            panel.allowsMultipleSelection = false
+                            panel.canCreateDirectories = true
+                            panel.prompt = "Choose"
+                            panel.title = "Choose screenshot save location"
+                            if panel.runModal() == .OK, let url = panel.url {
+                                screenshotSaveDir = url.path
+                            }
+                        }
+                        if !screenshotSaveDir.isEmpty {
+                            Button("Reset") { screenshotSaveDir = "" }
+                        }
+                    }
                 }
 
                 Section("Left (D-Pad)") {
@@ -464,8 +524,7 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
         }
-        .frame(width: 440)
-        .fixedSize(horizontal: false, vertical: true)
+        .frame(minWidth: 360)
     }
 
     @ViewBuilder
