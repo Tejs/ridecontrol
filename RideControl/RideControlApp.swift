@@ -381,7 +381,10 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
         w.contentView = view
         w.contentMinSize = NSSize(width: 360, height: 320)
         w.contentMaxSize = NSSize(width: 1200, height: 10000)
-        w.center()
+        let autosaveName = "RideControlSettingsWindow"
+        let restored = w.setFrameUsingName(autosaveName)
+        w.setFrameAutosaveName(autosaveName)
+        if !restored { w.center() }
         w.isReleasedWhenClosed = false
         w.delegate = self
         w.makeKeyAndOrderFront(nil)
