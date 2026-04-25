@@ -9,6 +9,10 @@ import UserNotifications
 
 let showTestButtons = false
 
+// MARK: - UserDefaults keys
+
+let screenshotDirKey = "screenshotSaveDir"
+
 // MARK: - Actions
 
 enum KeyAction: String, CaseIterable, Codable {
@@ -30,8 +34,9 @@ enum KeyAction: String, CaseIterable, Codable {
     case mediaPlay      = "Play/Pause"
     case mediaNext      = "Next Track"
     case mediaPrev      = "Previous Track"
-    case screenshotArea = "Screenshot Area"
-    case screenshotFull = "Screenshot Full"
+    case screenshotArea     = "Screenshot Area (Clipboard)"
+    case screenshotAreaFile = "Screenshot Area (File)"
+    case screenshotFull     = "Screenshot Full"
     case paste          = "Paste"
     case copy           = "Copy"
     case none           = "None"
@@ -116,6 +121,18 @@ func fireAction(_ action: KeyAction, pressed: Bool) {
         let task = Process()
         task.launchPath = "/usr/sbin/screencapture"
         task.arguments = ["-ic"]
+        task.launch()
+    case .screenshotAreaFile where pressed:
+        let task = Process()
+        task.launchPath = "/usr/sbin/screencapture"
+        if let dir = UserDefaults.standard.string(forKey: screenshotDirKey), !dir.isEmpty {
+            let fmt = DateFormatter()
+            fmt.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+            let path = (dir as NSString).appendingPathComponent("Screenshot \(fmt.string(from: Date())).png")
+            task.arguments = ["-i", path]
+        } else {
+            task.arguments = ["-i"]
+        }
         task.launch()
     case .screenshotFull where pressed:
         let task = Process()
@@ -346,14 +363,16 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             self?.setPinned(pinned)
         }))
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 720),
-            styleMask: [.titled, .closable, .miniaturizable],
+            contentRect: NSRect(x: 0, y: 0, width: 440, height: 600),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         w.title = "RideControl"
         w.titlebarAppearsTransparent = true
         w.contentView = view
+        w.contentMinSize = NSSize(width: 440, height: 320)
+        w.contentMaxSize = NSSize(width: 440, height: 10000)
         w.center()
         w.isReleasedWhenClosed = false
         w.delegate = self
@@ -377,6 +396,7 @@ struct SettingsView: View {
     @State private var mappings = ButtonMappings.shared
     @State private var launchAtLogin = (SMAppService.mainApp.status == .enabled)
     @State private var pinOnTop = false
+    @AppStorage(screenshotDirKey) private var screenshotSaveDir: String = ""
 
     let onPinChanged: (Bool) -> Void
 
@@ -439,6 +459,33 @@ struct SettingsView: View {
                                 else { try SMAppService.mainApp.unregister() }
                             } catch { print("Login item error: \(error)") }
                         }
+
+                    HStack {
+                        Text("Screenshot save location")
+                        Spacer()
+                        Text(screenshotSaveDir.isEmpty
+                             ? "Default (system setting)"
+                             : (screenshotSaveDir as NSString).abbreviatingWithTildeInPath)
+                            .foregroundStyle(.secondary)
+                            .font(.system(size: 12))
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Button("Choose…") {
+                            let panel = NSOpenPanel()
+                            panel.canChooseDirectories = true
+                            panel.canChooseFiles = false
+                            panel.allowsMultipleSelection = false
+                            panel.canCreateDirectories = true
+                            panel.prompt = "Choose"
+                            panel.title = "Choose screenshot save location"
+                            if panel.runModal() == .OK, let url = panel.url {
+                                screenshotSaveDir = url.path
+                            }
+                        }
+                        if !screenshotSaveDir.isEmpty {
+                            Button("Reset") { screenshotSaveDir = "" }
+                        }
+                    }
                 }
 
                 Section("Left (D-Pad)") {
@@ -465,7 +512,6 @@ struct SettingsView: View {
             .formStyle(.grouped)
         }
         .frame(width: 440)
-        .fixedSize(horizontal: false, vertical: true)
     }
 
     @ViewBuilder
