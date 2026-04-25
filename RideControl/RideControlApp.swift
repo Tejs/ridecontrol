@@ -25,6 +25,7 @@ enum KeyAction: String, CaseIterable, Codable {
     case tab            = "Tab"
     case shiftTab       = "Shift + Tab"
     case cmdTab         = "Cmd + Tab"
+    case cmdReturn      = "Cmd + Return"
     case space          = "Space"
     case backspace      = "Backspace"
     case fn             = "Fn (hold)"
@@ -115,6 +116,13 @@ func fireAction(_ action: KeyAction, pressed: Bool) {
         e?.flags = .maskCommand
         e?.post(tap: .cgSessionEventTap)
         let u = CGEvent(keyboardEventSource: src, virtualKey: 0x30, keyDown: false)
+        u?.flags = .maskCommand
+        u?.post(tap: .cgSessionEventTap)
+    case .cmdReturn where pressed:
+        let e = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: true)
+        e?.flags = .maskCommand
+        e?.post(tap: .cgSessionEventTap)
+        let u = CGEvent(keyboardEventSource: src, virtualKey: 0x24, keyDown: false)
         u?.flags = .maskCommand
         u?.post(tap: .cgSessionEventTap)
     case .screenshotArea where pressed:
@@ -363,7 +371,7 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
             self?.setPinned(pinned)
         }))
         let w = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 440, height: 600),
+            contentRect: NSRect(x: 0, y: 0, width: 550, height: 600),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
@@ -371,8 +379,8 @@ class SettingsWindowController: NSObject, NSWindowDelegate {
         w.title = "RideControl"
         w.titlebarAppearsTransparent = true
         w.contentView = view
-        w.contentMinSize = NSSize(width: 440, height: 320)
-        w.contentMaxSize = NSSize(width: 440, height: 10000)
+        w.contentMinSize = NSSize(width: 360, height: 320)
+        w.contentMaxSize = NSSize(width: 1200, height: 10000)
         w.center()
         w.isReleasedWhenClosed = false
         w.delegate = self
@@ -398,6 +406,11 @@ struct SettingsView: View {
     @State private var pinOnTop = false
     @AppStorage(screenshotDirKey) private var screenshotSaveDir: String = ""
 
+    private var appVersion: String {
+        let short = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?"
+        return short
+    }
+
     let onPinChanged: (Bool) -> Void
 
     let dpadButtons: [KICKRButton]   = [.up, .down, .left, .right]
@@ -406,47 +419,44 @@ struct SettingsView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            ZStack {
-                VStack(spacing: 10) {
+            ZStack(alignment: .topTrailing) {
+                VStack(spacing: 6) {
                     Image("MenuBarIcon")
                         .resizable()
                         .scaledToFit()
-                        .frame(width: 48, height: 48)
+                        .frame(width: 36, height: 36)
                         .foregroundStyle(.primary)
-                    VStack(spacing: 2) {
+                    VStack(spacing: 1) {
                         Text("RideControl")
-                            .font(.system(size: 20, weight: .bold))
-                        Text("KICKR Bike Controller")
-                            .font(.subheadline)
+                            .font(.system(size: 17, weight: .bold))
+                        Text("KICKR Bike Controller · v\(appVersion)")
+                            .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity)
 
-                HStack {
-                    Spacer()
-                    Button {
-                        pinOnTop.toggle()
-                        onPinChanged(pinOnTop)
-                    } label: {
-                        Image(systemName: pinOnTop ? "pin.fill" : "pin")
-                            .rotationEffect(.degrees(pinOnTop ? 0 : 45))
-                            .font(.system(size: 14))
-                            .foregroundStyle(pinOnTop ? Color.accentColor : Color.secondary)
-                            .frame(width: 28, height: 28)
-                            .background(
-                                Circle().fill(pinOnTop ? Color.accentColor.opacity(0.15) : Color.clear)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(pinOnTop ? "Unpin from top" : "Keep window on top")
-                    .padding(.trailing, 16)
+                Button {
+                    pinOnTop.toggle()
+                    onPinChanged(pinOnTop)
+                } label: {
+                    Image(systemName: pinOnTop ? "pin.fill" : "pin")
+                        .rotationEffect(.degrees(pinOnTop ? 0 : 45))
+                        .font(.system(size: 13))
+                        .foregroundStyle(pinOnTop ? Color.accentColor : Color.secondary)
+                        .frame(width: 24, height: 24)
+                        .background(
+                            Circle().fill(pinOnTop ? Color.accentColor.opacity(0.15) : Color.clear)
+                        )
                 }
-                .frame(maxHeight: .infinity, alignment: .top)
-                .padding(.top, 12)
+                .buttonStyle(.plain)
+                .help(pinOnTop ? "Unpin from top" : "Keep window on top")
+                .padding(.top, 8)
+                .padding(.trailing, 12)
             }
-            .padding(.top, 16)
-            .padding(.bottom, 20)
+            .padding(.top, 12)
+            .padding(.bottom, 12)
+            .fixedSize(horizontal: false, vertical: true)
 
             Divider()
 
@@ -511,7 +521,7 @@ struct SettingsView: View {
             }
             .formStyle(.grouped)
         }
-        .frame(width: 440)
+        .frame(minWidth: 360)
     }
 
     @ViewBuilder
