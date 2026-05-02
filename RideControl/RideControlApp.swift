@@ -131,17 +131,50 @@ func fireAction(_ action: KeyAction, pressed: Bool) {
         task.arguments = ["-ic"]
         task.launch()
     case .screenshotAreaFile where pressed:
+        let dir = UserDefaults.standard.string(forKey: screenshotDirKey) ?? ""
+        let fmt = DateFormatter()
+        fmt.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
+        let filename = "Screenshot \(fmt.string(from: Date())).png"
         let task = Process()
         task.launchPath = "/usr/sbin/screencapture"
-        if let dir = UserDefaults.standard.string(forKey: screenshotDirKey), !dir.isEmpty {
-            let fmt = DateFormatter()
-            fmt.dateFormat = "yyyy-MM-dd 'at' HH.mm.ss"
-            let path = (dir as NSString).appendingPathComponent("Screenshot \(fmt.string(from: Date())).png")
-            task.arguments = ["-i", path]
-        } else {
+        if dir.isEmpty {
+            // No custom dir chosen — let screencapture use the system default location.
             task.arguments = ["-i"]
+            do { try task.run() } catch {
+                NSLog("[RideControl] screencapture launch failed: %@", error.localizedDescription)
+            }
+        } else {
+            // Stage to /tmp first (always writable by any process), then move from our
+            // own process. The spawned screencapture has a separate TCC token from our
+            // app and may be denied direct writes to user folders even when we aren't.
+            let tempPath = (NSTemporaryDirectory() as NSString).appendingPathComponent(filename)
+            let finalPath = (dir as NSString).appendingPathComponent(filename)
+            task.arguments = ["-i", tempPath]
+            NSLog("[RideControl] screencapture → temp: %@", tempPath)
+            do { try task.run() } catch {
+                NSLog("[RideControl] screencapture launch failed: %@", error.localizedDescription)
+                break
+            }
+            DispatchQueue.global(qos: .userInitiated).async {
+                task.waitUntilExit()
+                NSLog("[RideControl] screencapture exit %d", task.terminationStatus)
+                guard task.terminationStatus == 0,
+                      FileManager.default.fileExists(atPath: tempPath) else {
+                    NSLog("[RideControl] no temp file produced (user cancelled or capture failed)")
+                    return
+                }
+                do {
+                    if FileManager.default.fileExists(atPath: finalPath) {
+                        try FileManager.default.removeItem(atPath: finalPath)
+                    }
+                    try FileManager.default.moveItem(atPath: tempPath, toPath: finalPath)
+                    NSLog("[RideControl] screenshot saved → %@", finalPath)
+                } catch {
+                    NSLog("[RideControl] move to %@ failed: %@ — leaving file at %@",
+                          finalPath, error.localizedDescription, tempPath)
+                }
+            }
         }
-        task.launch()
     case .screenshotFull where pressed:
         let task = Process()
         task.launchPath = "/usr/sbin/screencapture"
@@ -492,7 +525,36 @@ struct SettingsView: View {
                             panel.prompt = "Choose"
                             panel.title = "Choose screenshot save location"
                             if panel.runModal() == .OK, let url = panel.url {
-                                screenshotSaveDir = url.path
+                                // Verify we can actually write to the chosen folder.
+                                // On modern macOS, attempting a real write here will surface
+                                // any TCC permission prompt up front rather than silently
+                                // failing later when a screenshot fires.
+                                let testURL = url.appendingPathComponent(".ridecontrol-write-test")
+                                do {
+                                    try Data().write(to: testURL)
+                                    try? FileManager.default.removeItem(at: testURL)
+                                    screenshotSaveDir = url.path
+                                } catch {
+                                    let alert = NSAlert()
+                                    alert.messageText = "RideControl can't write to that folder"
+                                    alert.informativeText = """
+                                        Couldn't save a test file to "\(url.path)".
+
+                                        \(error.localizedDescription)
+
+                                        Open System Settings → Privacy & Security → Files and Folders, find RideControl, and toggle on access for the folder you want to use. Then try Choose… again.
+
+                                        If RideControl isn't listed, try a different folder (e.g. ~/Pictures), or build a release version installed to /Applications — debug builds run from Xcode get a new identity each rebuild and may be denied silently.
+                                        """
+                                    alert.alertStyle = .warning
+                                    alert.addButton(withTitle: "Open System Settings")
+                                    alert.addButton(withTitle: "Cancel")
+                                    let response = alert.runModal()
+                                    if response == .alertFirstButtonReturn,
+                                       let prefsURL = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_FilesAndFolders") {
+                                        NSWorkspace.shared.open(prefsURL)
+                                    }
+                                }
                             }
                         }
                         if !screenshotSaveDir.isEmpty {
