@@ -91,6 +91,64 @@ Each notification is a 3-byte payload (sometimes longer, but only the first 3 ma
 
 The fix in `handleButton`: in the shift layer (when B is held), Down fires the action on every event regardless of the "pressed" flag, while Up/Left/Right fire only on the press edge. See the `handleButton` method.
 
+### B double-press gesture
+
+Two B presses within 500ms toggle the mapping reference HUD. `handleButton` only
+counts it when the *previous* B hold didn't actually fire a shift-layer action
+(`shiftUsedThisHold`) — otherwise two quick shifted actions in a row would open the
+HUD by accident. B keeps working as the shift modifier throughout; the gesture is
+purely additive.
+
+---
+
+## Bluetooth power behaviour — do not regress this
+
+The app originally called `scanForPeripherals(withServices: nil, options: nil)` on
+power-on and again on every disconnect, and never stopped. An open, unfiltered scan
+asks the Bluetooth controller to deliver **every** advertisement in radio range to
+the host, which forces the Mac out of standby to drain that queue. Measured on the
+author's machine with `pmset -g log`: dark wakes attributed to the Bluetooth side of
+the Wi-Fi/BT combo chip (`wifibt … centauri-beta`) at a **median of 48 seconds
+apart**, 700–1400 per day, draining the battery overnight with the lid shut.
+
+The connection strategy now is:
+
+1. **Never scan if we know the bike.** `knownPeripheralID` is stored after a
+   *successful* connect. On launch we `retrievePeripherals(withIdentifiers:)` and
+   issue a *pending* `connect(peripheral, options: nil)`. A pending connection never
+   times out, is serviced inside the Bluetooth controller, and does **not** wake the
+   host for unrelated advertisements — it costs ~nothing while the bike is off.
+   Verified: with the identifier stored, the app connects on launch with no scan.
+2. **Scan only when the bike has never been seen**, in bounded 12-second windows
+   with exponential backoff (20s → 120s cap) instead of continuously. After 3 empty
+   rounds it stops scanning entirely and idles on a pending connect.
+3. **Release the radio on sleep.** `NSWorkspace.willSleepNotification` stops the
+   scan and cancels the connection; `didWakeNotification` restores it. Controlled by
+   the `pauseBluetoothOnSleep` preference (default on).
+
+Diagnostics go to `~/Library/Logs/RideControl.log` via `rcLog`. This exists because
+nothing this app writes reaches the unified log — `log show`/`log stream` return
+literally nothing for the RideControl process, so the file is the only trace available.
+
+**Two traps to avoid when touching `KICKRManager`:**
+
+- **Do not pass `CBConnectPeripheralOptionEnableAutoReconnect` on macOS.** It is
+  rejected — every `connect(...)` fails immediately with *"One or more parameters
+  were invalid"*, so the app can never connect and sits on "Waiting for bike". Pass
+  `options: nil`. A plain connect already pends indefinitely; `didDisconnect`
+  re-arms it, which covers what the option would have done.
+- Never re-arm a connection directly from `didFailToConnect`. CoreBluetooth can
+  invoke that delegate **synchronously** from inside `connect(...)`, so calling
+  `connectPending` from it recurses until the stack overflows — the app dies with
+  `EXC_CRASH (SIGABRT)`, and confusingly the crash report's `termination` field
+  blames a missing `NSBluetoothAlwaysUsageDescription` even though the key is
+  present. Always go through a timer.
+- Never restore the unfiltered permanent scan as a "make it connect faster" fix.
+  That is the original battery bug.
+- A connect failure is not proof the stored identifier is stale — verify against the
+  identifier seen in `didDiscover` before blaming it. Here they matched exactly and
+  the real fault was the options dictionary.
+
 ---
 
 ## App architecture
@@ -101,7 +159,10 @@ Everything lives in **`RideControlApp.swift`** as a single file. There's no need
 2. **`fireAction(_:pressed:)`** — the action dispatcher; takes a `KeyAction` and a press/release flag, posts the appropriate macOS event
 3. **`KICKRButton` enum** — the 10 physical buttons with display names
 4. **`parseButtonEvent(_:)`** — parses a 3-byte BLE payload into a `ButtonEvent`
-5. **`ButtonMappings`** (`@Observable`) — the persistent mapping dictionaries (normal layer + shift layer); saves to `UserDefaults`
+5. **`Profile`** — a named set of mappings (normal + shift layer) for one kind of work. Stored as `[String: String]` internally so the JSON stays readable and unknown buttons/actions degrade to `.none` rather than failing to decode.
+5b. **`ButtonMappings`** (`@Observable`) — owns the profile list and which one is active; saves to `UserDefaults`. Migrates the pre-profile `buttonMappings` keys into a "Vibe Coding" profile on first run and seeds "Email" and "Slack" copies alongside it.
+5c. **`ProfileHUD`** — a transient, non-activating `NSPanel` that names the profile you just switched to, so the change is visible from the saddle.
+5d. **`MappingHUD`** — the button reference card, toggled by double-pressing B. Shows all 15 mappings for the active profile. `MappingHUDView` reads `ButtonMappings.shared` rather than taking a `Profile` snapshot, so switching profiles while it's open re-renders it in place; `announceProfileChange()` then suppresses the `ProfileHUD` toast (the card already names the profile) and restarts the dismiss timer instead. Both HUDs share `makeHUDPanel()`, a non-activating floating panel pinned to `.darkAqua` — the `.hudWindow` material is dark in both themes, so without pinning, Light Mode labels resolve to near-black and disappear. `MappingHUDView` uses `NSVisualEffectView.Material.hudWindow`, the same backing macOS uses for its own HUD panels. (The system volume/brightness OSD is *not* available to apps — that's private `OSDUIHelper`.)
 6. **`KICKRManager`** (`@Observable`, `CBCentralManagerDelegate`) — BLE connection + button event handling. Tracks `isShiftHeld` state.
 7. **`SettingsWindowController`** — manages the standalone settings window (NSWindow, not SwiftUI Settings scene because that's flaky in menu bar apps)
 8. **`SettingsView`** — the SwiftUI settings UI with grouped sections, picker rows, pin-on-top button
@@ -134,11 +195,24 @@ Normal layer:
 - Left Lever → Fn + Space (Wispr Flow hands-free)
 - Right Lever → Fn (hold) (Wispr Flow push-to-talk)
 
-Shift layer (hold B + D-pad):
+Shift layer (hold B, then press):
 - B + ↑ → Screenshot Area (Clipboard)
 - B + ↓ → Space
 - B + ← → Backspace
 - B + → → Paste
+- B + Left Lever → Next Profile
+
+The set of buttons that can carry a shift action is `Profile.shiftableButtons`
+(D-pad + left lever). Everything else falls through to the normal layer even while B
+is held. Three places read that list — the settings rows, the reference HUD column,
+and the routing in `handleButton` — so adding or removing a slot is a one-line change.
+
+**The right lever is intentionally not shiftable.** B and the right lever are both on
+the right shifter and cannot be pressed together with one hand, so `B + Right Lever`
+is physically unreachable on the bike. It was briefly included and removed. Don't
+re-add it. When adding a new slot to `defaultShiftMap`, `backfillNewShiftSlots()`
+fills it into already-saved profiles on next launch — it keys off *absence* of a
+binding, so a user's deliberate "None" is never overwritten.
 
 ---
 
@@ -175,8 +249,12 @@ Media keys use these IOKit constants instead:
 
 | Key | Type | Owner | Purpose |
 |-----|------|-------|---------|
-| `buttonMappings`      | `[String: String]` | `ButtonMappings` | Normal-layer button → action mapping (raw values) |
-| `buttonShiftMappings` | `[String: String]` | `ButtonMappings` | Shift-layer (B + D-pad) mapping (raw values) |
+| `profiles`            | `Data` (JSON `[Profile]`) | `ButtonMappings` | All profiles, each with its own normal + shift mapping |
+| `activeProfileID`     | `String` (UUID)    | `ButtonMappings` | Which profile is currently live |
+| `buttonMappings`      | `[String: String]` | *legacy*         | Pre-profile normal-layer mapping. Read once at migration, never written again. |
+| `buttonShiftMappings` | `[String: String]` | *legacy*         | Pre-profile shift-layer mapping. Read once at migration, never written again. |
+| `knownPeripheralID`   | `String` (UUID)    | `KICKRManager`   | Identifier of the last bike connected to, so it can be reconnected without scanning |
+| `pauseBluetoothOnSleep` | `Bool`           | `SettingsView` (`@AppStorage`) | Release the BLE connection while the Mac sleeps. Defaults to **true** when unset. |
 | `screenshotSaveDir`   | `String`           | `SettingsView` (`@AppStorage`) | Optional directory path for `Screenshot Area (File)`. Empty string = use macOS default location. |
 
 **Note on enum rename safety**: `KeyAction` raw values are persisted by string. Renaming a case's raw value will cause stored mappings using the old name to silently fail to decode and fall back to the in-code default. Treat `KeyAction.rawValue` as part of the storage contract.

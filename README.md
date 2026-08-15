@@ -27,7 +27,7 @@ The KICKR Bike has 10 buttons across two shifter units — a D-pad on the left, 
 
 ### Shift layer
 
-Hold **B** and press a D-pad button to access a second layer of actions:
+Hold **B** and press a left-hand button to access a second layer of actions:
 
 | Button | Shifted Action |
 |--------|----------------|
@@ -35,8 +35,12 @@ Hold **B** and press a D-pad button to access a second layer of actions:
 | B + ↓ | Space |
 | B + ← | Backspace |
 | B + → | Paste |
+| B + Left Lever | Next Profile |
 
-All 14 mappings (10 normal + 4 shifted) are fully configurable via the Settings window.
+All 15 mappings (10 normal + 5 shifted) are fully configurable via the Settings window.
+
+The right lever has no shift layer — B and the right lever are both on the right
+shifter, so you can't hold one and press the other with the same hand.
 
 ---
 
@@ -45,7 +49,10 @@ All 14 mappings (10 normal + 4 shifted) are fully configurable via the Settings 
 - Connects automatically to any Wahoo KICKR Bike over BLE
 - Runs as a lightweight menu bar app — no Dock icon
 - Fully remappable buttons via a native macOS Settings window
+- **Profiles** — separate mappings per kind of work (coding, email, Slack…), switchable from the menu bar or from the bike itself
 - Shift layer for 4 extra actions (hold B)
+- **Button reference HUD** — double-press B to see every current mapping without leaving the saddle
+- Sleeps when your Mac does — releases Bluetooth so it can't wake the machine overnight
 - Launch at login support
 - Pin Settings window on top for quick reference while learning the layout
 - Reconnects automatically if the bike disconnects
@@ -53,7 +60,21 @@ All 14 mappings (10 normal + 4 shifted) are fully configurable via the Settings 
 
 ### Available actions
 
-Arrow keys, Return, Escape, Tab, Shift+Tab, Cmd+Tab, Space, Backspace, Fn (hold), Fn+Space, Volume Up/Down, Play/Pause, Next/Previous Track, Screenshot Area, Screenshot Full, Copy, Paste.
+Arrow keys, Return, Escape, Tab, Shift+Tab, Cmd+Tab, Cmd+Return, Space, Backspace, Fn (hold), Fn+Space, Volume Up/Down, Play/Pause, Next/Previous Track, Screenshot Area, Screenshot Full, Copy, Paste, Next/Previous Profile.
+
+---
+
+## Profiles
+
+Different work needs different buttons. A profile is a complete set of mappings — all
+10 buttons plus the 4 shift-layer actions — and you can keep as many as you like.
+
+Three are created for you on first launch: **Vibe Coding**, **Email** and **Slack**,
+all starting from your existing mappings so nothing you had is lost. Rename, duplicate
+or delete them in Settings.
+
+Switch profiles either from the menu bar, or without leaving the handlebars by mapping
+a button to **Next Profile** — a heads-up display names the profile you land on.
 
 ---
 
